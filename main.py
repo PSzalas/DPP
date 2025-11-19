@@ -1,49 +1,70 @@
-from fastapi import FastAPI
-import pandas as pd
-from Models.Movie import Movie
-from Models.Link import Link
-from Models.Rating import Rating
-from Models.Tag import Tag
+from fastapi import FastAPI, Depends
+from sqlalchemy.orm import Session
+from database import SessionLocal, init_db
+from models import Movie, Link, Tag, Rating
 
 app = FastAPI()
+init_db()
 
-@app.get("/")
-def read_root():
-    return {"hello": "world"}
+def get_db():
+    db = SessionLocal()
+    print(db.query(Movie).count())
+    try:
+        yield db
+    finally:
+        db.close()
 
 @app.get("/movies")
-def get_movies():
-    df = pd.read_csv("database/movies.csv")
-    movies = []
-    for _, row in df.iterrows():
-        movie = Movie(row["movieId"], row["title"], row["genres"])
-        movies.append(movie.__dict__)
-    return movies
+def get_movies(db: Session = Depends(get_db)):
+    movies = db.query(Movie).all()
+    return [{"movieId": m.movieId, "title": m.title, "genres": m.genres} for m in movies]
 
 @app.get("/links")
-def get_links():
-    df = pd.read_csv("database/links.csv")
-    links = []
-    for _, row in df.iterrows():
-        tmdbId = None if pd.isna(row.get("tmdbId")) else row["tmdbId"]
-        link = Link(row["movieId"], row["imdbId"], tmdbId)
-        links.append(link.__dict__)
-    return links
+def get_links(db: Session = Depends(get_db)):
+    links = db.query(Link).all()
+    return [
+        {
+            "movieId": l.movieId,
+            "imdbId": l.imdbId,
+            "tmdbId": l.tmdbId
+        }
+        for l in links
+    ]
+
 
 @app.get("/ratings")
-def get_ratings():
-    df = pd.read_csv("database/ratings.csv")
-    ratings = []
-    for _, row in df.iterrows():
-        r = Rating(row["userId"], row["movieId"], row["rating"], row["timestamp"])
-        ratings.append(r.__dict__)
-    return ratings
+def get_ratings(db: Session = Depends(get_db)):
+    ratings = db.query(Rating).all()
+    return [
+        {
+            "userId": r.userId,
+            "movieId": r.movieId,
+            "rating": r.rating,
+            "timestamp": r.timestamp
+        }
+        for r in ratings
+    ]
+
 
 @app.get("/tags")
-def get_tags():
-    df = pd.read_csv("database/tags.csv")
-    tags = []
-    for _, row in df.iterrows():
-        t = Tag(row["userId"], row["movieId"], row["tag"], row["timestamp"])
-        tags.append(t.__dict__)
-    return tags
+def get_tags(db: Session = Depends(get_db)):
+    tags = db.query(Tag).all()
+    return [
+        {
+            "id": t.id,
+            "userId": t.userId,
+            "movieId": t.movieId,
+            "tag": t.tag,
+            "timestamp": t.timestamp
+        }
+        for t in tags
+    ]
+
+@app.get("/debug")
+def debug(db: Session = Depends(get_db)):
+    return {
+        "movies": db.query(Movie).count(),
+        "links": db.query(Link).count(),
+        "ratings": db.query(Rating).count(),
+        "tags": db.query(Tag).count()
+    }
