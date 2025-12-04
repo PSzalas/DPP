@@ -1,7 +1,12 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from database import SessionLocal, init_db
-from models import Movie, Link, Tag, Rating
+from database import init_db, get_db
+from models import Movie, Link, Tag, Rating, User, UserCreate
+from pydantic import BaseModel
+from datetime import datetime, timedelta
+import auth
+from auth import get_current_user, get_current_admin_user
+from fastapi.security import OAuth2PasswordRequestForm
 
 app = FastAPI()
 init_db()
@@ -10,17 +15,43 @@ init_db()
 def read_root():
     return {"hello": "world"}
 
-def get_db():
-    db = SessionLocal()
-    print(db.query(Movie).count())
-    try:
-        yield db
-    finally:
-        db.close()
+# LOGIN
+@app.post("/login")
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == form_data.username).first()
+    if not user or not auth.verify_password(form_data.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = auth.create_access_token(
+        data={"sub": user.username, "roles": user.roles}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+# CREATE USER
+@app.post("/users", status_code=201)
+def create_user(user: UserCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    db_user = db.query(User).filter(User.username == user.username).first()
+    if db_user:
+        raise HTTPException(status_code=400, detail="Username already registered")
+    hashed_password = auth.get_password_hash(user.password)
+    new_user = User(username=user.username, password_hash=hashed_password, roles=user.roles)
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return {"username": new_user.username, "roles": new_user.roles}
+
+# USER DETAILS
+@app.get("/user_details")
+def read_users_me(current_user: User = Depends(get_current_user)):
+    return {"username": current_user.username, "roles": current_user.roles}
 
 # CREATE
 @app.post("/movies", status_code=201)
-def create_movie(movie: dict, db: Session = Depends(get_db)):
+def create_movie(movie: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     new_movie = Movie(
         movieId=movie["movieId"],
         title=movie["title"],
@@ -32,13 +63,13 @@ def create_movie(movie: dict, db: Session = Depends(get_db)):
 
 # READ ALL
 @app.get("/movies")
-def get_movies(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def get_movies(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     movies = db.query(Movie).offset(skip).limit(limit).all()
     return movies
 
 # READ ONE
 @app.get("/movies/{movie_id}")
-def get_movie(movie_id: int, db: Session = Depends(get_db)):
+def get_movie(movie_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     movie = db.query(Movie).filter(Movie.movieId == movie_id).first()
     if not movie:
         raise HTTPException(404, "Movie not found")
@@ -50,7 +81,7 @@ def get_movie(movie_id: int, db: Session = Depends(get_db)):
 
 # UPDATE
 @app.put("/movies/{movie_id}")
-def update_movie(movie_id: int, data: dict, db: Session = Depends(get_db)):
+def update_movie(movie_id: int, data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     movie = db.query(Movie).filter(Movie.movieId == movie_id).first()
     if not movie:
         raise HTTPException(404, "Movie not found")
@@ -63,7 +94,7 @@ def update_movie(movie_id: int, data: dict, db: Session = Depends(get_db)):
 
 # DELETE
 @app.delete("/movies/{movie_id}")
-def delete_movie(movie_id: int, db: Session = Depends(get_db)):
+def delete_movie(movie_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     movie = db.query(Movie).filter(Movie.movieId == movie_id).first()
     if not movie:
         raise HTTPException(404, "Movie not found")
@@ -74,7 +105,7 @@ def delete_movie(movie_id: int, db: Session = Depends(get_db)):
 
 # CREATE
 @app.post("/links", status_code=201)
-def create_link(link: dict, db: Session = Depends(get_db)):
+def create_link(link: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     new_link = Link(
         movieId=link["movieId"],
         imdbId=link.get("imdbId"),
@@ -86,13 +117,13 @@ def create_link(link: dict, db: Session = Depends(get_db)):
 
 # READ ALL
 @app.get("/links")
-def get_links(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def get_links(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     links = db.query(Link).offset(skip).limit(limit).all()
     return links
 
 # READ ONE
 @app.get("/links/{movie_id}")
-def get_link(movie_id: int, db: Session = Depends(get_db)):
+def get_link(movie_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     link = db.query(Link).filter(Link.movieId == movie_id).first()
     if not link:
         raise HTTPException(404, "Link not found")
@@ -105,7 +136,7 @@ def get_link(movie_id: int, db: Session = Depends(get_db)):
 
 # UPDATE
 @app.put("/links/{movie_id}")
-def update_link(movie_id: int, data: dict, db: Session = Depends(get_db)):
+def update_link(movie_id: int, data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     link = db.query(Link).filter(Link.movieId == movie_id).first()
     if not link:
         raise HTTPException(404, "Link not found")
@@ -118,7 +149,7 @@ def update_link(movie_id: int, data: dict, db: Session = Depends(get_db)):
 
 # DELETE
 @app.delete("/links/{movie_id}")
-def delete_link(movie_id: int, db: Session = Depends(get_db)):
+def delete_link(movie_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     link = db.query(Link).filter(Link.movieId == movie_id).first()
     if not link:
         raise HTTPException(404, "Link not found")
@@ -129,7 +160,7 @@ def delete_link(movie_id: int, db: Session = Depends(get_db)):
 
 # CREATE
 @app.post("/ratings", status_code=201)
-def create_rating(rating: dict, db: Session = Depends(get_db)):
+def create_rating(rating: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     new_rating = Rating(
         userId=rating["userId"],
         movieId=rating["movieId"],
@@ -142,13 +173,13 @@ def create_rating(rating: dict, db: Session = Depends(get_db)):
 
 # READ ALL
 @app.get("/ratings")
-def get_ratings(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def get_ratings(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     ratings = db.query(Rating).offset(skip).limit(limit).all()
     return ratings
 
 # READ ONE
 @app.get("/ratings/{user_id}/{movie_id}")
-def get_rating(user_id: int, movie_id: int, db: Session = Depends(get_db)):
+def get_rating(user_id: int, movie_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     rating = db.query(Rating).filter(
         Rating.userId == user_id,
         Rating.movieId == movie_id
@@ -165,7 +196,7 @@ def get_rating(user_id: int, movie_id: int, db: Session = Depends(get_db)):
 
 # UPDATE
 @app.put("/ratings/{user_id}/{movie_id}")
-def update_rating(user_id: int, movie_id: int, data: dict, db: Session = Depends(get_db)):
+def update_rating(user_id: int, movie_id: int, data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     rating = db.query(Rating).filter(
         Rating.userId == user_id,
         Rating.movieId == movie_id
@@ -182,7 +213,7 @@ def update_rating(user_id: int, movie_id: int, data: dict, db: Session = Depends
 
 # DELETE
 @app.delete("/ratings/{user_id}/{movie_id}")
-def delete_rating(user_id: int, movie_id: int, db: Session = Depends(get_db)):
+def delete_rating(user_id: int, movie_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     rating = db.query(Rating).filter(
         Rating.userId == user_id,
         Rating.movieId == movie_id
@@ -197,7 +228,7 @@ def delete_rating(user_id: int, movie_id: int, db: Session = Depends(get_db)):
 
 # CREATE
 @app.post("/tags", status_code=201)
-def create_tag(tag: dict, db: Session = Depends(get_db)):
+def create_tag(tag: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     new_tag = Tag(
         userId=tag["userId"],
         movieId=tag["movieId"],
@@ -210,13 +241,13 @@ def create_tag(tag: dict, db: Session = Depends(get_db)):
 
 # READ ALL
 @app.get("/tags")
-def get_tags(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def get_tags(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     tags = db.query(Tag).offset(skip).limit(limit).all()
     return tags
 
 # READ ONE
 @app.get("/tags/{tag_id}")
-def get_tag(tag_id: int, db: Session = Depends(get_db)):
+def get_tag(tag_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     tag = db.query(Tag).filter(Tag.id == tag_id).first()
     if not tag:
         raise HTTPException(404, "Tag not found")
@@ -231,7 +262,7 @@ def get_tag(tag_id: int, db: Session = Depends(get_db)):
 
 # UPDATE
 @app.put("/tags/{tag_id}")
-def update_tag(tag_id: int, data: dict, db: Session = Depends(get_db)):
+def update_tag(tag_id: int, data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     tag = db.query(Tag).filter(Tag.id == tag_id).first()
     if not tag:
         raise HTTPException(404, "Tag not found")
@@ -244,7 +275,7 @@ def update_tag(tag_id: int, data: dict, db: Session = Depends(get_db)):
 
 # DELETE
 @app.delete("/tags/{tag_id}")
-def delete_tag(tag_id: int, db: Session = Depends(get_db)):
+def delete_tag(tag_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     tag = db.query(Tag).filter(Tag.id == tag_id).first()
     if not tag:
         raise HTTPException(404, "Tag not found")
@@ -254,7 +285,7 @@ def delete_tag(tag_id: int, db: Session = Depends(get_db)):
     return {"message": "Tag deleted"}
 
 @app.get("/debug")
-def debug(db: Session = Depends(get_db)):
+def debug(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return {
         "movies": db.query(Movie).count(),
         "links": db.query(Link).count(),

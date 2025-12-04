@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from main import app, get_db
-from models import Base, Movie, Link, Rating, Tag
+from models import Base, Movie, Link, Rating, Tag, User
 
 # ---- BAZA TESTOWA ----
 TEST_DB_URL = "sqlite:///./test.db"
@@ -34,7 +34,6 @@ def db():
     yield session
     session.close()
 
-
 # ---- FIXTURE API ----
 @pytest.fixture()
 def client(db):
@@ -48,14 +47,25 @@ def client(db):
     app.dependency_overrides[get_db] = override_get_db
     return TestClient(app)
 
+@pytest.fixture()
+def mock_user():
+    return User(username="testuser", roles="ROLE_USER")
+
+@pytest.fixture()
+def authorized_client(client, mock_user):
+    from auth import get_current_user
+    app.dependency_overrides[get_current_user] = lambda: mock_user
+    yield client
+    del app.dependency_overrides[get_current_user]
+
 @pytest.fixture(autouse=True)
 def clear_db(db):
     db.query(Movie).delete()
     db.query(Link).delete()
     db.query(Rating).delete()
     db.query(Tag).delete()
+    db.query(User).delete()
     db.commit()
-
 
 # ---- FIXTURE DANYCH TESTOWYCH ----
 @pytest.fixture()

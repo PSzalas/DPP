@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, String, Float, ForeignKey
 from sqlalchemy.orm import declarative_base
+from pydantic import BaseModel
 
 Base = declarative_base()
 
@@ -29,3 +30,15 @@ class Tag(Base):
     movieId = Column(Integer)
     tag = Column(String)
     timestamp = Column(Integer)
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True)
+    password_hash = Column(String)
+    roles = Column(String) # Comma-separated roles, e.g., "ROLE_USER,ROLE_ADMIN"
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    roles: str = "ROLE_USER"

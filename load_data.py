@@ -1,7 +1,8 @@
 import pandas as pd
 from sqlalchemy.orm import Session
-from models import Movie, Link, Rating, Tag
-from database import engine, SessionLocal, init_db
+from models import Movie, Link, Rating, Tag, User
+from database import SessionLocal, init_db
+from auth import get_password_hash
 
 init_db()
 session: Session = SessionLocal()
@@ -17,10 +18,9 @@ df_links = pd.read_csv("database/links.csv")
 
 # Jeśli kolumna tmdbId istnieje
 if "tmdbId" in df_links.columns:
-    # Zamieniamy na float, żeby Pandas mógł mieć NaN
     df_links["tmdbId"] = pd.to_numeric(df_links["tmdbId"], errors="coerce")
 else:
-    df_links["tmdbId"] = pd.NA  # dodaj kolumnę z None, jeśli nie istnieje
+    df_links["tmdbId"] = pd.NA
 
 for _, row in df_links.iterrows():
     link = Link(
@@ -41,6 +41,13 @@ df_tags = pd.read_csv("database/tags.csv")
 for _, row in df_tags.iterrows():
     tag = Tag(userId=row["userId"], movieId=row["movieId"], tag=row["tag"], timestamp=row["timestamp"])
     session.add(tag)
+
+# users
+user = User(username="user1", password_hash=get_password_hash("password"), roles="ROLE_USER")
+session.add(user)
+
+admin = User(username="admin1", password_hash=get_password_hash("password"), roles="ROLE_USER,ROLE_ADMIN")
+session.add(admin)
 
 session.commit()
 session.close()
